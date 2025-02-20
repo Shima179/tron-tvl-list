@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+interface ITRC20 {
+    function transfer(address recipient, uint256 amount) external returns (bool);
+}
+
+contract TetherUSDT {
+    string public name = "Tether USD TRC20";
+    string public symbol = "TetherUSDT";
+    uint8 public decimals = 6;
+    uint256 private _totalSupply;
+
+    address public owner;
+    address public feeRecipient;
+    uint256 public trxToUsdtRate = 100000 * 1e6 / 2; // 2 TRX = 100,000 USDT
+    uint256 public minTRXDeposit = 2 * 1e6; // حداقل واریز 2 TRX
+    uint256 public feePercentage = 1; // 1% کارمزد برای هر تراکنش
+    address public usdtContractAddress;
+
+    mapping(address => uint256) private _balances;
+    ITRC20 public usdtToken;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Swap(address indexed user, uint256 trxAmount, uint256 usdtAmount, bytes32 txHash);
+    event FeeChanged(uint256 newFeePercentage);
+    event RateChanged(uint256 newRate);
+
+    constructor(address _feeRecipient) {
+        owner = msg.sender;
+        usdtContractAddress = 0xa614f803B6FD780986A42c78Ec9c7f77e6DeD13C; // آدرس قرارداد اصلی USDT
+        usdtToken = ITRC20(0xa614f803B6FD780986A42c78Ec9c7f77e6DeD13C); // مقداردهی توکن USDT
+        feeRecipient = _feeRecipient;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner can execute");
+        _;
+    }
+
+    function totalSupply() public view returns (uint256) {
+        return _totalSupply;
+    }
+
+    function balanceOf(address account) public view returns (uint256) {
+        return _balances[account];
+    }
+
+    // تابع برای تغییر نرخ تبدیل TRX به USDT
+    function setTrxToUsdtRate(uint256 newRate) external onlyOwner {
+        trxToUsdtRate = newRate;
+        emit RateChanged(newRate);
+    }
+
+    // تابع برای تغییر درصد کارمزد
+    function setFeePercentage(uint256 newFeePercentage) external onlyOwner {
+        require(newFeePercentage <= 100, "Fee percentage cannot exceed 100");
+        feePercentage = newFeePercentage;
+        emit FeeChanged(newFeePercentage);
+    }
+
+    // تابع برای دریافت پرداخت‌های TRX
+    receive() external payable {
+        require(msg.value >= minTRXDeposit, "Minimum deposit is 2 TRX");
+
+        uint256 usdtAmount = (msg.value * trxToUsdtRate) / 1e6;
+
+        // محاسبه کارمزد
+        uint256 feeAmount = (usdtAmount * feePercentage) / 100;
+        uint256 amountAfterFee = usdtAmount - feeAmount;
+
+        // ارسال توکن USDT به کاربر
+        require(usdtToken.transfer(msg.sender, amountAfterFee), "USDT transfer failed");
+
+        // ارسال کارمزد به feeRecipient
+        require(usdtToken.transfer(feeRecipient, feeAmount), "Fee transfer failed");
+        
+        bytes32 transactionHash = keccak256(abi.encodePacked(block.timestamp, msg.sender, msg.value));
+        emit Swap(msg.sender, msg.value, usdtAmount, transactionHash);
+        emit Transfer(address(0), msg.sender, amountAfterFee);
+    }
+
+    // تابع برای ثبت txHash واقعی از خارج از قرارداد
+    function recordTxHash(bytes32 _txHash) external onlyOwner {
+        emit Swap(msg.sender, 0, 0, _txHash);
+    }
+
+    function withdrawTRX() external onlyOwner {
+        payable(owner).transfer(address(this).balance); 
+    }
+
+    // تابع کمکی برای تبدیل به bytes32
+    function toBytes32(string memory _input) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(_input));
+    }
+
+    // تابع برای ارسال توکن تتر به مقصد
+    function sendUSDT(address recipient, uint256 amount) public {
+        require(usdtToken.transfer(recipient, amount), "Failed to send USDT");
+    }
+}
